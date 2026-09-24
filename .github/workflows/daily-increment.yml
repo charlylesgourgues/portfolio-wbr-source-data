@@ -1,0 +1,37 @@
+name: Source data load (daily)
+
+on:
+  schedule:
+    - cron: "17 7 * * *"      # every day at 07:17 UTC (01:17 in Mexico City)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "increment = upsert changes since last run; init = wipe crm.* and reload full history"
+        type: choice
+        options: [increment, init]
+        default: increment
+
+concurrency:
+  group: azure-sql-source      # waits for a running deployment instead of racing it
+  cancel-in-progress: false
+
+jobs:
+  increment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      AZURE_SQL_CONN: ${{ secrets.AZURE_SQL_CONN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-mssql
+      - name: Schema must be up to date
+        working-directory: source
+        run: |
+          python migrate.py status | tee status.txt
+          if grep -q PENDING status.txt; then echo "::error::Pending migrations: run the CD workflow first"; exit 1; fi
+      - name: Load
+        working-directory: source/generator
+        env:
+          MODE: ${{ inputs.mode || 'increment' }}
+        run: python generate.py "$MODE" --target azure

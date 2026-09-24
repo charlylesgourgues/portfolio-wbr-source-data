@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+    paths: ["source/**", ".github/**", "pyproject.toml"]
+  push:
+    branches: [main]
+    paths: ["source/**", ".github/**", "pyproject.toml"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint + SQL validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ruff sqlglot
+      - run: ruff check .
+      - run: ruff format --check .
+      - name: Validate migrations (naming, order, no DROP TABLE, parse)
+        run: python source/migrate.py validate
+
+  unit-tests:
+    name: Data contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-mssql
+        with: { dev: "true" }
+      - run: pytest -q
+
+  integration:
+    name: Migrations + load on SQL Server 2022
+    needs: [lint]
+    runs-on: ubuntu-latest
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Ci-Throwaway-Passw0rd!   # throwaway container, not a secret
+        ports: ["1433:1433"]
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Ci-Throwaway-Passw0rd! -Q 'SELECT 1' -b"
+          --health-interval 10s --health-timeout 5s --health-retries 12
+    env:
+      AZURE_SQL_CONN: "Driver={ODBC Driver 18 for SQL Server};Server=localhost,1433;Database=wbr_ci;Uid=sa;Pwd=Ci-Throwaway-Passw0rd!;Encrypt=yes;TrustServerCertificate=yes;"
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-python-mssql
+      - run: python ci/integration_check.py create-db
+      - name: Apply migrations
+        run: python migrate.py apply
+      - name: Migrations are idempotent
+        run: python migrate.py apply | grep -q "schema up to date"
+      - name: Initial load (as of 2025-01-15)
+        working-directory: source/generator
+        run: python generate.py init --target azure --as-of "2025-01-15 06:00"
+      - run: python ci/integration_check.py verify "2025-01-15 06:00"
+      - name: Two daily increments via MERGE
+        working-directory: source/generator
+        run: |
+          python generate.py increment --target azure --as-of "2025-01-16 06:00"
+          python generate.py increment --target azure --as-of "2025-01-17 06:00"
+      - run: python ci/integration_check.py verify "2025-01-17 06:00"

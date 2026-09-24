@@ -1,0 +1,11 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B023", "B905"]   # loop closures are intentional; zip() lengths are equal by construction
+
+[tool.pytest.ini_options]
+testpaths = ["source/generator/tests"]
+pythonpath = ["source/generator"]

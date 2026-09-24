@@ -1,0 +1,28 @@
+name: Set up Python + SQL Server ODBC driver
+description: Python 3.12, ODBC Driver 18 for SQL Server, and the source project's dependencies
+inputs:
+  dev:
+    description: Also install dev dependencies (pytest, ruff, sqlglot)
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: source/**/requirements*.txt
+    - name: Install ODBC Driver 18 for SQL Server
+      shell: bash
+      run: |
+        if ! odbcinst -q -d 2>/dev/null | grep -q "ODBC Driver 18"; then
+          curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
+          curl -sSL https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          sudo apt-get update -q
+          sudo ACCEPT_EULA=Y apt-get install -y -q msodbcsql18 unixodbc-dev
+        fi
+    - name: Install Python dependencies
+      shell: bash
+      run: |
+        if [ "${{ inputs.dev }}" = "true" ]; then pip install -r source/requirements-dev.txt
+        else pip install -r source/generator/requirements.txt; fi
