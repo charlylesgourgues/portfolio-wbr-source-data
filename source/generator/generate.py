@@ -45,12 +45,15 @@ def stats(tables: dict[str, pd.DataFrame]):
     # cohort conversion on leads old enough to have matured (created >= 150 days before the cut)
     cut = leads.updated_at.max() - pd.Timedelta(days=150)
     mature = leads[leads.created_at <= cut]
+    print(f"\nFunnel on {len(mature):,} mature leads (created before {cut:%Y-%m-%d}):")
+    if mature.empty:
+        print("  (none yet)")
+        return
     reached = ev.drop_duplicates(["lead_id", "stage"]).pivot_table(
         index="lead_id", columns="stage", values="event_id", aggfunc="count"
     )
     m = reached.reindex(mature.lead_id).notna()
     stages = ["lead_created", "assigned", "pre_approved", "rate_locked", "funded"]
-    print(f"\nFunnel on {len(mature):,} mature leads (created before {cut:%Y-%m-%d}):")
     prev = None
     for s in stages:
         n = int(m[s].sum()) if s in m else 0
