@@ -23,7 +23,7 @@ def connect(conn_str: str | None = None):
     # a paused serverless database can take ~1 min to wake up: retry
     for attempt in range(1, 5):
         try:
-            return pyodbc.connect(conn_str, autocommit=False)
+            return pyodbc.connect(conn_str, autocommit=False, timeout=60)
         except pyodbc.Error as e:
             if attempt == 4:
                 raise

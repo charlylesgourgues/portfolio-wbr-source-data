@@ -17,8 +17,8 @@ jobs:
     name: Lint + SQL validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
       - run: pip install ruff sqlglot
       - run: ruff check .
@@ -30,7 +30,7 @@ jobs:
     name: Data contract tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-mssql
         with: { dev: "true" }
       - run: pytest -q
@@ -55,7 +55,7 @@ jobs:
       run:
         working-directory: source
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-mssql
       - run: python ci/integration_check.py create-db
       - name: Apply migrations

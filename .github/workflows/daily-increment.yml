@@ -23,7 +23,7 @@ jobs:
     env:
       AZURE_SQL_CONN: ${{ secrets.AZURE_SQL_CONN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-mssql
       - name: Schema must be up to date
         working-directory: source
