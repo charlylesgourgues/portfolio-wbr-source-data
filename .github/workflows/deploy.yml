@@ -23,6 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-python-mssql
+      - name: Network diagnostics (DNS + TCP, no login)
+        run: python migrate.py diagnose
       - name: Pending migrations
         run: python migrate.py status
       - name: Apply
