@@ -17,6 +17,7 @@ import hashlib
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 MIGRATIONS = Path(__file__).parent / "sql" / "migrations"
@@ -74,7 +75,15 @@ def _connect():
     conn = os.environ.get("AZURE_SQL_CONN")
     if not conn:
         sys.exit("Set AZURE_SQL_CONN.")
-    return pyodbc.connect(conn, autocommit=False)
+    # a paused serverless database can take ~1 min to wake up: retry
+    for attempt in range(1, 5):
+        try:
+            return pyodbc.connect(conn, autocommit=False, timeout=60)
+        except pyodbc.Error as e:
+            if attempt == 4:
+                raise
+            print(f"  connection failed (attempt {attempt}/4), retrying in 30s: {e.args[-1] if e.args else e}")
+            time.sleep(30)
 
 
 def _applied(cur) -> dict[int, tuple[str, str]]:
