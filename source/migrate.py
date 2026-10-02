@@ -1,6 +1,7 @@
 """Versioned schema migrations for the Azure SQL source database.
 
   python migrate.py validate          # parse every migration (no database; used by CI)
+  python migrate.py diagnose          # DNS + TCP reachability of the server (no login)
   python migrate.py status            # list applied / pending migrations
   python migrate.py apply             # apply pending migrations (used by CD)
 
@@ -67,6 +68,86 @@ def validate():
                 sys.exit(f"{name}: DROP TABLE is not allowed in a migration run by CD")
             n += len([s for s in sqlglot.parse(body, read="tsql") if s])
         print(f"  ok  {name} ({n} statements)")
+
+
+def _odbc_fields(conn: str) -> dict[str, str]:
+    """Split an ODBC connection string into {key: value}, honoring {braced} values
+    where ';' and '=' are literal and '}}' is an escaped '}'."""
+    fields: list[str] = []
+    buf: list[str] = []
+    in_braces = False
+    i, n = 0, len(conn)
+    while i < n:
+        c = conn[i]
+        if c == "{" and not in_braces:
+            in_braces = True
+            buf.append(c)
+            i += 1
+        elif c == "}" and in_braces:
+            if conn[i + 1 : i + 2] == "}":
+                buf.append("}")
+                i += 2
+            else:
+                in_braces = False
+                buf.append(c)
+                i += 1
+        elif c == ";" and not in_braces:
+            fields.append("".join(buf))
+            buf = []
+            i += 1
+        else:
+            buf.append(c)
+            i += 1
+    fields.append("".join(buf))
+    out = {}
+    for f in fields:
+        f = f.strip()
+        if "=" in f:
+            k, v = f.split("=", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def diagnose():
+    """Check that the server in AZURE_SQL_CONN is reachable. Never prints credentials."""
+    import socket
+    import urllib.request
+
+    conn = os.environ.get("AZURE_SQL_CONN")
+    if not conn:
+        sys.exit("Set AZURE_SQL_CONN.")
+    if conn.strip()[:1] in "\"'":
+        print("  WARNING: the connection string starts with a quote: remove the quotes from the secret")
+    fields = _odbc_fields(conn)
+    print(f"  keys found  : {', '.join(sorted(fields))}")
+    server = next((v for k, v in fields.items() if k in ("server", "address", "addr")), None)
+    if server is None:
+        sys.exit("  no Server=... in the connection string")
+    server = re.sub(r"(?i)^tcp:", "", server.strip("{}").replace("}}", "}"))
+    host, _, port = server.partition(",")
+    port = int(port or 1433)
+    print(f"  server host : {host}   port: {port}")
+    if not host.lower().endswith(".database.windows.net"):
+        print("  WARNING: an Azure SQL host normally ends with .database.windows.net")
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as r:
+            print(f"  runner IP   : {r.read().decode()}")
+    except OSError:
+        pass
+    try:
+        ips = sorted({a[4][0] for a in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)})
+        print(f"  DNS         : ok -> {', '.join(ips)}")
+    except socket.gaierror as e:
+        sys.exit(f"  DNS         : FAILED ({e}) -> the server name in the secret is wrong")
+    t = time.time()
+    try:
+        socket.create_connection((host, port), timeout=20).close()
+        print(f"  TCP {port}    : ok in {time.time() - t:.1f}s -> the network path is open")
+    except OSError as e:
+        sys.exit(
+            f"  TCP {port}    : FAILED after {time.time() - t:.0f}s ({e}) -> blocked before login: "
+            "check 'Public network access' in the server's Networking page"
+        )
 
 
 def _connect():
@@ -136,5 +217,5 @@ def apply():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["validate", "status", "apply"])
-    {"validate": validate, "status": status, "apply": apply}[ap.parse_args().command]()
+    ap.add_argument("command", choices=["validate", "diagnose", "status", "apply"])
+    {"validate": validate, "diagnose": diagnose, "status": status, "apply": apply}[ap.parse_args().command]()
