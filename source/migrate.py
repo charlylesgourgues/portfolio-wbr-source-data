@@ -70,6 +70,44 @@ def validate():
         print(f"  ok  {name} ({n} statements)")
 
 
+def _odbc_fields(conn: str) -> dict[str, str]:
+    """Split an ODBC connection string into {key: value}, honoring {braced} values
+    where ';' and '=' are literal and '}}' is an escaped '}'."""
+    fields: list[str] = []
+    buf: list[str] = []
+    in_braces = False
+    i, n = 0, len(conn)
+    while i < n:
+        c = conn[i]
+        if c == "{" and not in_braces:
+            in_braces = True
+            buf.append(c)
+            i += 1
+        elif c == "}" and in_braces:
+            if conn[i + 1 : i + 2] == "}":
+                buf.append("}")
+                i += 2
+            else:
+                in_braces = False
+                buf.append(c)
+                i += 1
+        elif c == ";" and not in_braces:
+            fields.append("".join(buf))
+            buf = []
+            i += 1
+        else:
+            buf.append(c)
+            i += 1
+    fields.append("".join(buf))
+    out = {}
+    for f in fields:
+        f = f.strip()
+        if "=" in f:
+            k, v = f.split("=", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
 def diagnose():
     """Check that the server in AZURE_SQL_CONN is reachable. Never prints credentials."""
     import socket
@@ -80,12 +118,12 @@ def diagnose():
         sys.exit("Set AZURE_SQL_CONN.")
     if conn.strip()[:1] in "\"'":
         print("  WARNING: the connection string starts with a quote: remove the quotes from the secret")
-    keys = [k.split("=", 1)[0].strip() for k in conn.split(";") if "=" in k]
-    print(f"  keys found  : {', '.join(keys)}")
-    m = re.search(r"(?i)(?:^|;)\s*(?:server|address|addr)\s*=\s*([^;]+)", conn)
-    if not m:
+    fields = _odbc_fields(conn)
+    print(f"  keys found  : {', '.join(sorted(fields))}")
+    server = next((v for k, v in fields.items() if k in ("server", "address", "addr")), None)
+    if server is None:
         sys.exit("  no Server=... in the connection string")
-    server = re.sub(r"(?i)^tcp:", "", m.group(1).strip().strip("{}"))
+    server = re.sub(r"(?i)^tcp:", "", server.strip("{}").replace("}}", "}"))
     host, _, port = server.partition(",")
     port = int(port or 1433)
     print(f"  server host : {host}   port: {port}")
