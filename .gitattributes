@@ -1,0 +1,7 @@
+# Keep line endings stable across Windows and the Linux CI runners.
+# Migration checksums are computed on LF, and shell/YAML files must stay LF.
+* text=auto
+*.sql text eol=lf
+*.py  text eol=lf
+*.yml text eol=lf
+*.sh  text eol=lf
