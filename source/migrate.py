@@ -7,8 +7,14 @@
 
 Migrations are files sql/migrations/V<nnn>__<name>.sql, applied in order,
 each in its own transaction, and recorded in sim.schema_migrations with a
-checksum. Editing an already-applied file makes status/apply fail: add a new
+checksum (computed on LF line endings, so a Windows checkout gives the same
+value). Editing an already-applied file makes status/apply fail: add a new
 migration instead.
+
+A migration whose first line is `-- migrate:no-transaction` runs in
+autocommit mode, for statements SQL Server refuses inside a transaction
+(e.g. ALTER DATABASE). Such a migration must be idempotent (IF NOT EXISTS
+guards), because a failure halfway cannot be rolled back.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from pathlib import Path
 MIGRATIONS = Path(__file__).parent / "sql" / "migrations"
 NAME = re.compile(r"^V(\d{3})__([a-z0-9_]+)\.sql$")
 GO = re.compile(r"^\s*GO\s*$", re.IGNORECASE | re.MULTILINE)
+NO_TRANSACTION = "-- migrate:no-transaction"
 
 BOOTSTRAP = """
 IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'sim') EXEC('CREATE SCHEMA sim');
@@ -43,7 +50,8 @@ def discover() -> list[tuple[int, str, Path, str]]:
         m = NAME.match(p.name)
         if not m:
             sys.exit(f"Bad migration file name: {p.name} (expected V001__snake_case.sql)")
-        out.append((int(m.group(1)), p.name, p, hashlib.sha256(p.read_bytes()).hexdigest()))
+        checksum = hashlib.sha256(p.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+        out.append((int(m.group(1)), p.name, p, checksum))
     versions = [v for v, *_ in out]
     if versions != list(range(1, len(versions) + 1)):
         sys.exit(f"Migration versions must be contiguous from V001, got {versions}")
@@ -52,6 +60,11 @@ def discover() -> list[tuple[int, str, Path, str]]:
 
 def batches(sql: str) -> list[str]:
     return [b.strip() for b in GO.split(sql) if b.strip()]
+
+
+def needs_autocommit(sql: str) -> bool:
+    lines = sql.lstrip().splitlines()
+    return bool(lines) and lines[0].strip().lower() == NO_TRANSACTION
 
 
 def validate():
@@ -201,18 +214,27 @@ def apply():
     if not pending:
         print("  schema up to date")
     for v, name, path, checksum in pending:
+        sql = path.read_text()
+        autocommit = needs_autocommit(sql)
+        cn.autocommit = autocommit
         try:
-            for b in batches(path.read_text()):
+            for b in batches(sql):
                 cur.execute(b)
             cur.execute(
                 "INSERT INTO sim.schema_migrations (version, name, checksum) VALUES (?, ?, ?)", v, name, checksum
             )
-            cn.commit()
-            print(f"  applied  {name}")
+            if not autocommit:
+                cn.commit()
+            print(f"  applied  {name}" + (" (no transaction)" if autocommit else ""))
         except Exception:
-            cn.rollback()
-            print(f"  FAILED   {name} (rolled back)")
+            if autocommit:
+                print(f"  FAILED   {name} (no transaction: fix it and re-run, it must be idempotent)")
+            else:
+                cn.rollback()
+                print(f"  FAILED   {name} (rolled back)")
             raise
+        finally:
+            cn.autocommit = False
 
 
 if __name__ == "__main__":
