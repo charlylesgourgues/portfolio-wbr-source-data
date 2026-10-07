@@ -2,10 +2,10 @@ name: CI
 
 on:
   pull_request:
-    paths: ["source/**", ".github/**", "pyproject.toml"]
+    paths: ["source/**", ".github/**", "pyproject.toml", ".gitattributes"]
   push:
     branches: [main]
-    paths: ["source/**", ".github/**", "pyproject.toml"]
+    paths: ["source/**", ".github/**", "pyproject.toml", ".gitattributes"]
   workflow_dispatch: {}
 
 concurrency:
